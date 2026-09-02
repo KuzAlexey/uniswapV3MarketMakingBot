@@ -24,24 +24,29 @@ import {
 import { readCandles, readSwaps } from './read_market_data.js';
 import { logSummary } from './result_log.js';
 
-const swaps = readSwaps();
-const candles = readCandles();
+// Read market-data
+const swaps = readSwaps(); // swaps during [time_start, time_end]
+const candles = readCandles(); // candles during [time_start, time_end]
 
+// start position
 const state: State = {
   wallet: { weth: START_WETH, usdc: START_USDC },
   sqrtPool: sqrtFromX96(swaps[0]!.sqrtPriceX96),
-  centerTick: 0,
+  centerTick: 0, // geometry center of our positions (~ fair price on that moment)
 };
+
+// statistic (calculating during execution)
 const stats = newStats();
 
-const tickOf = (price: number) => priceToTick(price, DECIMALS_WETH, DECIMALS_USDC);
 
-/** Расстояние между двумя корнями цены, в тиках. */
-const ticksBetween = (a: number, b: number) => Math.abs((2 * Math.log(a / b)) / Math.log(1.0001));
 
-// --- стратегия ---
+// ####### strategy #######
 
-/** Две односторонние котировки с зазором 2*SPREAD_TICKS вокруг справедливой цены. */
+
+/*
+--- Two one-side positions around the fair price.
+--- mid - fair price from Binance  
+*/
 function plan(mid: number) {
   const midTick = tickOf(mid);
   const bidUpper = floorToSpacing(midTick - SPREAD_TICKS, TICK_SPACING);
@@ -52,12 +57,8 @@ function plan(mid: number) {
   };
 }
 
-/**
- * Справедливая цена отошла от центра котировок.
- *
- * Проверка по расстоянию, а не по пересечению границы: движение прочь от
- * котировок так же требует перевыставления, как и движение к ним, иначе
- * позиция остаётся стоять в стороне от рынка сколь угодно долго.
+/*
+--- Check if current price deviated from state.center
  */
 function midMoved(mid: number): boolean {
   return Math.abs(tickOf(mid) - state.centerTick) > PULL_FRACTION * SPREAD_TICKS;
@@ -179,3 +180,8 @@ for (const side of [state.bid, state.ask]) {
 
 console.log(`возвратных исполнений: поймано ${caughtPulls}, пропущено ${missedPulls}`);
 logSummary(stats, finalWallet, sqrtFromX96(swaps[0]!.sqrtPriceX96), state.sqrtPool);
+
+
+// helpers
+const tickOf = (price: number) => priceToTick(price, DECIMALS_WETH, DECIMALS_USDC);
+const ticksBetween = (a: number, b: number) => Math.abs((2 * Math.log(a / b)) / Math.log(1.0001)); // ticks beetwen prices (in pool)
