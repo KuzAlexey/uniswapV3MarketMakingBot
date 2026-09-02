@@ -1,4 +1,3 @@
-// Структуры и операции над виртуальной позицией. Ничего не отправляется в сеть.
 import {
   getAmountsForLiquidity,
   getLiquidityForAmounts,
@@ -9,10 +8,10 @@ import {
 export const DECIMALS_WETH = 18;
 export const DECIMALS_USDC = 6;
 
-/** Комиссия пула 0.05%, из которой четверть забирает протокол. */
+/* --- Pool fee of 0.05%, a quarter of which goes to the protocol. */
 export const LP_FEE_RATE = 0.0005 * 0.75;
 
-/** Кошелёк. Суммы в минимальных единицах токенов. */
+/* --- Wallet. Amounts are in each token's smallest units. */
 export interface Wallet {
   weth: number;
   usdc: number;
@@ -43,14 +42,13 @@ export interface Position {
   liquidity: number;
   feesUsd: number;
   fills: number;
-  /**
-   * Самая выгодная цена пула, до которой он зашёл в наш диапазон.
-   *
-   * Для аска это максимум: чем выше зашёл, тем дороже мы продали. Для бида —
-   * минимум. Отсчитывается в корнях цены и не выходит за границы диапазона:
-   * дальше них позиция уже полностью сконвертирована и движение на неё
-   * не влияет.
-   */
+  /*
+  --- The best pool price reached inside our range.
+  --- For the ask that is the highest: the further it went, the dearer we sold.
+  --- For the bid it is the lowest. Kept as a square root and clamped to the
+  --- range: beyond the bounds the position is fully converted and further
+  --- movement no longer touches it.
+  */
   poolExtreme: number;
 }
 
@@ -62,7 +60,7 @@ export function priceFromSqrt(sqrtPrice: number): number {
   return sqrtPrice ** 2 * 10 ** (DECIMALS_WETH - DECIMALS_USDC);
 }
 
-/** Открывает позицию, забирая из кошелька столько, сколько взял бы пул. */
+/* --- Opens a position, taking from the wallet exactly what the pool would take. */
 export function mint(
   wallet: Wallet,
   tickLower: number,
@@ -72,14 +70,14 @@ export function mint(
   const sqrtLower = tickToSqrtPrice(tickLower);
   const sqrtUpper = tickToSqrtPrice(tickUpper);
 
-  // token0 = WETH, token1 = USDC для этой пары
+  // token0 = WETH, token1 = USDC for this pair
   let liquidity = getLiquidityForAmounts(wallet.weth, wallet.usdc, sqrtLower, sqrtUpper, sqrtPool);
   let used = getAmountsForLiquidity(liquidity, sqrtLower, sqrtUpper, sqrtPool);
 
-  // Круговой перевод "суммы -> L -> суммы" идёт через float, и обратный ход
-  // может запросить чуть больше, чем есть. Просто обрезать кошелёк нельзя:
-  // позиция осталась бы с прежней L, то есть с деньгами из ниоткуда. Вместо
-  // этого ужимаем саму L до того, что реально влезает.
+  // The round trip "amounts -> L -> amounts" goes through floats, so the way
+  // back may ask for slightly more than we hold. Clamping the wallet alone is
+  // wrong: the position would keep its old L, that is money out of nowhere.
+  // Instead we shrink L itself down to what actually fits.
   const fit = Math.min(
     used.amount0 > 0 ? wallet.weth / used.amount0 : Infinity,
     used.amount1 > 0 ? wallet.usdc / used.amount1 : Infinity,
@@ -90,14 +88,14 @@ export function mint(
   }
   if (!Number.isFinite(liquidity) || liquidity < 0) liquidity = 0;
 
-  // Позиция не может стоить больше, чем было в кошельке.
+  // A position cannot be worth more than the wallet it came from.
   const price = priceFromSqrt(sqrtPool);
   const before = (wallet.weth / 1e18) * price + wallet.usdc / 1e6;
   const inside = (used.amount0 / 1e18) * price + used.amount1 / 1e6;
   if (inside > before * 1.0001 + 1e-6) {
-    console.log(`MINT СОЗДАЛ ДЕНЬГИ: было $${before.toFixed(2)}, в позицию ушло $${inside.toFixed(2)}`);
-    console.log(`  тики [${tickLower},${tickUpper}]  sqrt ${sqrtLower} ${sqrtUpper}  pool ${sqrtPool}`);
-    console.log(`  кошелёк weth=${wallet.weth.toExponential(3)} usdc=${wallet.usdc.toExponential(3)}`);
+    console.log(`MINT CREATED MONEY: had $${before.toFixed(2)}, put $${inside.toFixed(2)} into the position`);
+    console.log(`  ticks [${tickLower},${tickUpper}]  sqrt ${sqrtLower} ${sqrtUpper}  pool ${sqrtPool}`);
+    console.log(`  wallet weth=${wallet.weth.toExponential(3)} usdc=${wallet.usdc.toExponential(3)}`);
     console.log(`  L=${liquidity.toExponential(3)}  used0=${used.amount0.toExponential(3)} used1=${used.amount1.toExponential(3)}`);
     process.exit(1);
   }
@@ -121,19 +119,26 @@ export function mint(
   };
 }
 
-/** Состав позиции при текущей цене пула. */
+/* --- What the position holds at the current pool price. */
 export function amounts(position: Position, sqrtPool: number): Wallet {
   const a = getAmountsForLiquidity(position.liquidity, position.sqrtLower, position.sqrtUpper, sqrtPool);
   return { weth: a.amount0, usdc: a.amount1 };
 }
 
-/** Закрывает позицию, возвращая токены в кошелёк. Комиссии считаются отдельно. */
+/*
+--- Closes a position and returns its tokens to the wallet.
+--- Fees are deliberately left out: they are tracked as a dollar value by the
+--- caller, and a dollar figure cannot be added to a token balance.
+*/
 export function close(position: Position, wallet: Wallet, sqrtPool: number): Wallet {
   const held = amounts(position, sqrtPool);
   return { weth: wallet.weth + held.weth, usdc: wallet.usdc + held.usdc };
 }
 
-/** Начисляет комиссию за чужой своп, если он прошёл через диапазон позиции. */
+/*
+--- Credits the fee from someone else's swap if it crossed our range.
+--- Returns true when the swap actually touched us.
+*/
 export function applySwap(position: Position, swap: Swap, sqrtBefore: number): boolean {
   const sqrtAfter = sqrtFromX96(swap.sqrtPriceX96);
   const from = Math.min(sqrtBefore, sqrtAfter);
@@ -151,7 +156,7 @@ export function applySwap(position: Position, swap: Swap, sqrtBefore: number): b
   return true;
 }
 
-/** Стоимость кошелька и позиции в долларах. */
+/* --- Dollar value of the wallet plus an optional position. */
 export function valueUsd(wallet: Wallet, position: Position | undefined, sqrtPool: number): number {
   const held = position ? amounts(position, sqrtPool) : { weth: 0, usdc: 0 };
   const weth = (wallet.weth + held.weth) / 10 ** DECIMALS_WETH;
