@@ -1,4 +1,4 @@
-// Прогон стратегии по историческим данным. Два указателя: свечи и свопы.
+// Replays the strategy over historical data. Two cursors: candles and swaps.
 import { ceilToSpacing, floorToSpacing, priceToTick } from '../../src/math.js';
 import {
   DECIMALS_USDC,
@@ -24,18 +24,18 @@ import {
 import { readCandles, readSwaps } from './read_market_data.js';
 import { logSummary } from './result_log.js';
 
-// Read market-data
-const swaps = readSwaps(); // swaps during [time_start, time_end]
-const candles = readCandles(); // candles during [time_start, time_end]
+// Read market data
+const swaps = readSwaps(); // pool swaps during [START_DAY, END_DAY]
+const candles = readCandles(); // Binance candles over the same period
 
-// start position
+// Starting state
 const state: State = {
   wallet: { weth: START_WETH, usdc: START_USDC },
   sqrtPool: sqrtFromX96(swaps[0]!.sqrtPriceX96),
-  centerTick: 0, // geometry center of our positions (~ fair price on that moment)
+  centerTick: 0, // geometric center of our quotes (~ the fair price at that moment)
 };
 
-// statistic (calculating during execution)
+// Counters, filled in during the run
 const stats = newStats();
 
 
@@ -44,8 +44,8 @@ const stats = newStats();
 
 
 /*
---- Two one-side positions around the fair price.
---- mid - fair price from Binance  
+--- Two one-sided quotes around the fair price, separated by 2 * SPREAD_TICKS.
+--- mid - the fair price from Binance
 */
 function plan(mid: number) {
   const midTick = tickOf(mid);
@@ -58,27 +58,33 @@ function plan(mid: number) {
 }
 
 /*
---- Check if current price deviated from state.center
- */
+--- Checks whether the fair price has drifted away from state.centerTick.
+--- Distance, not boundary crossing: the price moving away from our quotes
+--- needs a redeploy just as much as the price moving into them.
+*/
 function midMoved(mid: number): boolean {
   return Math.abs(tickOf(mid) - state.centerTick) > PULL_FRACTION * SPREAD_TICKS;
 }
 
-/** Запоминает, до какой выгодной цены дошёл пул внутри наших котировок. */
-function trackExtreme(): void {
+/*
+--- Remembers the best price the pool reached inside our quotes.
+--- For the ask that is the highest: the further it went, the dearer we sold.
+*/
+function updatePeakPrice(): void {
   const p = state.sqrtPool;
   const { bid, ask } = state;
   if (ask) ask.poolExtreme = Math.max(ask.poolExtreme, Math.min(p, ask.sqrtUpper));
   if (bid) bid.poolExtreme = Math.min(bid.poolExtreme, Math.max(p, bid.sqrtLower));
 }
 
-/**
- * Цена пула откатилась от лучшей достигнутой.
- *
- * Заход цены в котировку выгоден: аск продал ETH выше рынка. Но если цена
- * пойдёт обратно тем же путём, позиция откупит проданное по тем же ценам и
- * круг закроется в ноль. Снявшись на откате, мы фиксируем продажу.
- */
+/*
+--- The pool price has retraced from the best it reached.
+--- Moving into a quote is good: the ask sold ETH above the market. But if the
+--- price walks back the same way, the position buys that ETH back at the same
+--- prices and the round trip nets to zero. Pulling on the retrace locks the sale.
+---
+--- tl,dr - guard from arbitrage
+*/
 function poolRetraced(): boolean {
   const p = state.sqrtPool;
   const { bid, ask } = state;
@@ -92,9 +98,10 @@ function poolRetraced(): boolean {
 function redeploy(mid: number, trigger: keyof typeof stats.byTrigger): void {
   const range = plan(mid);
 
-  // Сетка может округлить новые границы к тем же тикам — тогда перевыставление
-  // ничего не изменит, а газ спишется. Проверяем ДО закрытия: выйти после него,
-  // не открыв заново, значит оставить токены и в кошельке, и в позиции сразу.
+  // The grid may round the new bounds to the same ticks, so the redeploy would
+  // change nothing and still cost gas. Checked BEFORE closing: returning after
+  // that without reopening would leave the tokens in the wallet and in the
+  // position at once.
   if (state.bid && state.ask &&
       range.bid.upper === state.bid.tickUpper && range.ask.lower === state.ask.tickLower) {
     state.centerTick = tickOf(mid);
@@ -109,9 +116,9 @@ function redeploy(mid: number, trigger: keyof typeof stats.byTrigger): void {
   }
   state.bid = state.ask = undefined;
 
-  // Сторона выставляется, только если лежит целиком по свою сторону от цены
-  // пула. Плюс отбрасываем нулевую ликвидность: контракт требует amount > 0,
-  // такая транзакция откатится, а газ за откат не возвращается.
+  // A side is placed only if it sits entirely on its own side of the pool price.
+  // Zero liquidity is dropped as well: the contract requires amount > 0, such a
+  // transaction reverts, and gas spent on a revert is not refunded.
   const poolTick = tickOf(priceFromSqrt(state.sqrtPool));
   const place = (lower: number, upper: number) => {
     const opened = mint(state.wallet, lower, upper, state.sqrtPool);
@@ -121,6 +128,7 @@ function redeploy(mid: number, trigger: keyof typeof stats.byTrigger): void {
     return opened.position;
   };
 
+  // don't place position if it has arbitrage effect
   if (range.bid.upper <= poolTick) state.bid = place(range.bid.lower, range.bid.upper);
   if (range.ask.lower >= poolTick) state.ask = place(range.ask.lower, range.ask.upper);
 
@@ -128,14 +136,17 @@ function redeploy(mid: number, trigger: keyof typeof stats.byTrigger): void {
   state.centerTick = tickOf(mid);
 }
 
-// --- прогон ---
+// ####### run strategy #######
+// In this backtest we have two pointers
+// first pointer - candles (second)
+// second pointer - swaps
 
 let swapIndex = 0;
 let lastMid = candles[0]!.close;
 let backFillHere = false, missedPulls = 0, caughtPulls = 0;
 
 for (const candle of candles) {
-  // Догоняем свопы до текущей секунды, начисляя комиссии живым позициям.
+  // Catch up on swaps up to this second, crediting fees to the live quotes.
   while (swapIndex < swaps.length && swaps[swapIndex]!.timestamp <= candle.timestamp) {
     const swap: Swap = swaps[swapIndex]!;
     const before = state.sqrtPool;
@@ -146,17 +157,19 @@ for (const candle of candles) {
     let filled = false;
     if (state.bid && applySwap(state.bid, swap, before)) {
       filled = true;
-      // Для бида вглубь — это вниз: покупаем всё дешевле.
-      if (rising) { stats.fillsBack += 1; backFillHere = true; } else stats.fillsInward += 1;
+      // Inward for the bid means downward: we buy ever cheaper.
+      if (rising) { stats.fillsBack += 1; backFillHere = true; } 
+      else stats.fillsInward += 1;
     }
     if (state.ask && applySwap(state.ask, swap, before)) {
       filled = true;
-      // Для аска вглубь — это вверх: продаём всё дороже.
-      if (rising) stats.fillsInward += 1; else { stats.fillsBack += 1; backFillHere = true; }
+      // Inward for the ask means upward: we sell ever dearer.
+      if (rising) stats.fillsInward += 1; 
+      else { stats.fillsBack += 1; backFillHere = true; }
     }
     if (filled) stats.swapsFilled += 1;
 
-    trackExtreme();
+    updatePeakPrice();
     const retraced = poolRetraced();
     if (backFillHere && !retraced) missedPulls += 1;
     if (backFillHere && retraced) caughtPulls += 1;
@@ -170,7 +183,6 @@ for (const candle of candles) {
   else if (midMoved(candle.close)) redeploy(candle.close, 'midMoved');
 }
 
-// Закрываем всё, что осталось открытым, чтобы сравнить кошельки целиком.
 let finalWallet = state.wallet;
 for (const side of [state.bid, state.ask]) {
   if (!side) continue;
@@ -178,10 +190,15 @@ for (const side of [state.bid, state.ask]) {
   finalWallet = close(side, finalWallet, state.sqrtPool);
 }
 
-console.log(`возвратных исполнений: поймано ${caughtPulls}, пропущено ${missedPulls}`);
+console.log(`back fills: caught ${caughtPulls}, missed ${missedPulls}`);
 logSummary(stats, finalWallet, sqrtFromX96(swaps[0]!.sqrtPriceX96), state.sqrtPool);
 
 
-// helpers
-const tickOf = (price: number) => priceToTick(price, DECIMALS_WETH, DECIMALS_USDC);
-const ticksBetween = (a: number, b: number) => Math.abs((2 * Math.log(a / b)) / Math.log(1.0001)); // ticks beetwen prices (in pool)
+// ####### helpers #######
+function tickOf(price: number): number {
+  return priceToTick(price, DECIMALS_WETH, DECIMALS_USDC);
+}
+
+function ticksBetween(a: number, b: number): number {
+  return Math.abs((2 * Math.log(a / b)) / Math.log(1.0001)); // distance between two pool prices, in ticks
+}
