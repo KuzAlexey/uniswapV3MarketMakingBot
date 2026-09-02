@@ -1,4 +1,4 @@
-// Чтение выгруженных данных из test/data.
+// Technical csv reader
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,7 +15,7 @@ function readCsv(file: string): Record<string, string>[] {
   });
 }
 
-/** Сделки пула, отсортированы по времени. */
+/* --- Pool swaps, ordered by time. */
 export function readSwaps(): Swap[] {
   return readCsv('pool_swaps.csv').map((r) => ({
     timestamp: Number(r.timestamp),
@@ -28,7 +28,11 @@ export function readSwaps(): Swap[] {
   }));
 }
 
-/** Посекундные свечи Binance. close берём как справедливую цену. */
+/*
+--- Per-second Binance candles. We take close as the fair price: the archive
+--- has no order book, and close differs from the true mid by at most half the
+--- Binance spread, which is 0.02 bps.
+*/
 export function readCandles(): Candle[] {
   return readCsv('binance_candles.csv').map((r) => ({
     timestamp: Number(r.timestamp),
