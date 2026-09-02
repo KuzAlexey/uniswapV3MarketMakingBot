@@ -143,7 +143,6 @@ function redeploy(mid: number, trigger: keyof typeof stats.byTrigger): void {
 
 let swapIndex = 0;
 let lastMid = candles[0]!.close;
-let backFillHere = false, missedPulls = 0, caughtPulls = 0;
 
 for (const candle of candles) {
   // Catch up on swaps up to this second, crediting fees to the live quotes.
@@ -158,23 +157,19 @@ for (const candle of candles) {
     if (state.bid && applySwap(state.bid, swap, before)) {
       filled = true;
       // Inward for the bid means downward: we buy ever cheaper.
-      if (rising) { stats.fillsBack += 1; backFillHere = true; } 
+      if (rising) stats.fillsBack += 1;
       else stats.fillsInward += 1;
     }
     if (state.ask && applySwap(state.ask, swap, before)) {
       filled = true;
       // Inward for the ask means upward: we sell ever dearer.
-      if (rising) stats.fillsInward += 1; 
-      else { stats.fillsBack += 1; backFillHere = true; }
+      if (rising) stats.fillsInward += 1;
+      else stats.fillsBack += 1;
     }
     if (filled) stats.swapsFilled += 1;
 
     updatePeakPrice();
-    const retraced = poolRetraced();
-    if (backFillHere && !retraced) missedPulls += 1;
-    if (backFillHere && retraced) caughtPulls += 1;
-    backFillHere = false;
-    if (retraced) redeploy(lastMid, 'poolRetraced');
+    if (poolRetraced()) redeploy(lastMid, 'poolRetraced');
     swapIndex += 1;
   }
 
@@ -190,7 +185,6 @@ for (const side of [state.bid, state.ask]) {
   finalWallet = close(side, finalWallet, state.sqrtPool);
 }
 
-console.log(`back fills: caught ${caughtPulls}, missed ${missedPulls}`);
 logSummary(stats, finalWallet, sqrtFromX96(swaps[0]!.sqrtPriceX96), state.sqrtPool);
 
 

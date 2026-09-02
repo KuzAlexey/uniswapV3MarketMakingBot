@@ -22,6 +22,39 @@ const valueUsd = (w: Wallet, price: number) =>
 */
 export function logSummary(stats: Stats, finalWallet: Wallet, startSqrt: number, endSqrt: number): void {
   const gas = stats.burns * GAS_BURN + stats.mints * GAS_MINT;
+  const startPrice0 = priceFromSqrt(startSqrt);
+  const endPrice0 = priceFromSqrt(endSqrt);
+  const startWallet: Wallet = { weth: START_WETH, usdc: START_USDC };
+
+  // json for jupyter
+  if (process.env.REPORT === 'json') {
+    console.log(JSON.stringify({
+      params: {
+        spreadTicks: SPREAD_TICKS,
+        rangeTicks: RANGE_TICKS,
+        pullFraction: PULL_FRACTION,
+      },
+      swaps: { seen: stats.swapsSeen, touched: stats.swapsFilled,
+               inward: stats.fillsInward, back: stats.fillsBack },
+      fees: stats.feesTotalUsd,
+      gas,
+      net: stats.feesTotalUsd - gas,
+      operations: { burns: stats.burns, mints: stats.mints },
+      redeploys: {
+        total: stats.byTrigger.midMoved + stats.byTrigger.poolRetraced + stats.byTrigger.noPosition,
+        ...stats.byTrigger,
+      },
+      wallet: {
+        before: { weth: START_WETH / 10 ** DECIMALS_WETH, usdc: START_USDC / 10 ** DECIMALS_USDC,
+                  price: startPrice0, valueUsd: valueUsd(startWallet, startPrice0) },
+        after: { weth: finalWallet.weth / 10 ** DECIMALS_WETH, usdc: finalWallet.usdc / 10 ** DECIMALS_USDC,
+                 price: endPrice0, valueUsd: valueUsd(finalWallet, endPrice0) },
+      },
+      hodlUsd: (START_WETH / 10 ** DECIMALS_WETH) * endPrice0 + START_USDC / 10 ** DECIMALS_USDC,
+    }));
+    return;
+  }
+
   const t = stats.byTrigger;
   const redeploys = t.midMoved + t.poolRetraced + t.noPosition;
   const share = (v: number) => `${((v / (redeploys || 1)) * 100).toFixed(0)}%`;
