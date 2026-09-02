@@ -1,0 +1,34 @@
+{
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2"
+  },
+  "name": "uniswap-v3-mm-bot",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "bot": "tsx src/bot.ts",
+    "fork": "bash scripts/fork.sh",
+    "backtest": "tsx test/backtest/backtest.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KuzAlexey/uniswapV3MarketMakingBot.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/KuzAlexey/uniswapV3MarketMakingBot/issues"
+  },
+  "homepage": "https://github.com/KuzAlexey/uniswapV3MarketMakingBot#readme",
+  "type": "module",
+  "dependencies": {
+    "ethers": "^6.17.0",
+    "ws": "^8.21.3"
+  }
+}
