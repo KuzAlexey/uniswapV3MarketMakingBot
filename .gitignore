@@ -1,4 +1,7 @@
 node_modules/
 dist/
-.env
 *.log
+
+# Only the root .env holds a private key, so only it stays out of the repo.
+# The backtest and data-download configs are plain parameters and are committed.
+/.env
