@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Скачивает исходные данные для бэктеста в два CSV.
+Скачивает исходные данные для бэктеста в три CSV.
 
   pool_swaps.csv       все сделки пула Uniswap за период
   binance_candles.csv  посекундные свечи Binance за тот же период
+  hanji_book.csv       снимки стакана Hanji по сетке времени
 
 Ничего не требует, кроме стандартной библиотеки. Настройки — в .env рядом.
 """
@@ -29,6 +30,22 @@ BLOCKS_PER_SECOND = 4
 # в активные нода упирается в свой лимит и окно делится пополам.
 CHUNK_BLOCKS = 20_000
 
+# Base выпускает блок раз в две секунды.
+BASE_BLOCKS_PER_SECOND = 0.5
+
+# assembleOrderbookFromOrders(address,bool,uint24) — первые четыре байта
+# keccak от этой сигнатуры. Считать хеш нечем: в стандартной библиотеке
+# лежит SHA3 по стандарту NIST, а в Ethereum используется исходный Keccak.
+QUOTER_SELECTOR = "0x1c5f5589"
+
+# Сколько уровней просить с каждой стороны. Дальше четвёртого идут уже
+# настоящие лежащие ордера в нескольких процентах от цены — до них не доходит.
+BOOK_LEVELS = 8
+
+# Публичный узел Base отказывает, если звать его вплотную, причём не кодом 429,
+# а обычной ошибкой JSON-RPC. Отсюда отдельная пауза, больше общей.
+BOOK_MIN_INTERVAL = 0.5
+
 # Без этого и нода, и архив Binance отвечают 403: они отсекают запросы,
 # которые представляются стандартным клиентом Python.
 HEADERS = {"User-Agent": "Mozilla/5.0", "Content-Type": "application/json"}
@@ -53,39 +70,45 @@ def load_env():
     return settings
 
 
-def rpc(url, method, params, attempts=10, timeout=45):
+def fetch(url, payload=None, attempts=10, timeout=45, min_interval=None):
     """
-    Один вызов JSON-RPC к ноде.
+    HTTP-запрос с разбором JSON, общий для ноды и для API Hanji.
 
-    Публичная нода ограничивает частоту и отвечает 429. Скрипт делает сотни
+    Оба источника ограничивают частоту и отвечают 429. Скрипт делает сотни
     запросов, поэтому здесь и пауза перед каждым, и длинная выдержка при отказе.
     """
     global _last_call
 
-    payload = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+    data = payload.encode() if payload else None
     for attempt in range(attempts):
         # Не частим: держим минимальный интервал между любыми запросами.
-        wait = MIN_INTERVAL - (time.monotonic() - _last_call)
+        wait = (min_interval or MIN_INTERVAL) - (time.monotonic() - _last_call)
         if wait > 0:
             time.sleep(wait)
         _last_call = time.monotonic()
 
         try:
-            request = urllib.request.Request(url, data=payload.encode(), headers=HEADERS)
+            request = urllib.request.Request(url, data=data, headers=HEADERS)
             with urllib.request.urlopen(request, timeout=timeout) as response:
-                answer = json.loads(response.read())
-            if "error" in answer:
-                raise RuntimeError(answer["error"])
-            return answer["result"]
+                return json.loads(response.read())
         except urllib.error.HTTPError as error:
             if error.code != 429 or attempt == attempts - 1:
                 raise
-            # Нода иногда сама говорит, сколько ждать.
+            # Источник иногда сам говорит, сколько ждать.
             retry_after = error.headers.get("Retry-After")
             pause = float(retry_after) if retry_after and retry_after.isdigit() else min(60, 2 ** attempt)
             print(f"    429, жду {pause:.0f} с (попытка {attempt + 1}/{attempts})")
             time.sleep(pause)
     raise RuntimeError("unreachable")
+
+
+def rpc(url, method, params, attempts=10, timeout=45, min_interval=None):
+    """Один вызов JSON-RPC к ноде."""
+    payload = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+    answer = fetch(url, payload, attempts, timeout, min_interval)
+    if "error" in answer:
+        raise RuntimeError(answer["error"])
+    return answer["result"]
 
 
 def signed(word, bits):
@@ -104,10 +127,10 @@ def block_time(url, number):
     Двоичный поиск и границы кусков спрашивают одни и те же блоки помногу раз,
     поэтому ответы запоминаем — это заметно сокращает число запросов.
     """
-    if number not in _block_times:
+    if (url, number) not in _block_times:
         block = rpc(url, "eth_getBlockByNumber", [hex(number), False])
-        _block_times[number] = int(block["timestamp"], 16)
-    return _block_times[number]
+        _block_times[(url, number)] = int(block["timestamp"], 16)
+    return _block_times[(url, number)]
 
 
 def midnight(day):
@@ -115,7 +138,7 @@ def midnight(day):
     return int(datetime(day.year, day.month, day.day, tzinfo=timezone.utc).timestamp())
 
 
-def block_at_time(url, target, head, head_time):
+def block_at_time(url, target, head, head_time, blocks_per_second=BLOCKS_PER_SECOND):
     """
     Первый блок не раньше указанного времени.
 
@@ -124,8 +147,8 @@ def block_at_time(url, target, head, head_time):
     скорость блоков не постоянна, и на дистанции в недели фиксированного
     запаса не хватает — поиск молча упирался бы в край и возвращал не тот блок.
     """
-    guess = head - int((head_time - target) * BLOCKS_PER_SECOND)
-    margin = 3600 * BLOCKS_PER_SECOND              # начальный запас — час
+    guess = head - int((head_time - target) * blocks_per_second)
+    margin = int(3600 * blocks_per_second)         # начальный запас — час
     while True:
         low, high = max(1, guess - margin), min(head, guess + margin)
         if block_time(url, low) <= target <= block_time(url, high):
@@ -264,6 +287,99 @@ def download_candles(symbol, start_day, end_day, out_path):
     print(f"  -> {out_path}  ({len(rows):,} строк)\n")
 
 
+def fetch_book(url, quoter, proxy, block, is_ask, attempts=6):
+    """
+    Один снимок одной стороны стакана на историческом блоке.
+
+    Метод квотера объявлен view, поэтому его можно звать через eth_call с
+    номером блока в прошлом: узел выполнит его на состоянии того момента.
+    Возвращает списки цен и размеров в сырых единицах контракта.
+    """
+    data = (QUOTER_SELECTOR
+            + proxy.lower().removeprefix("0x").rjust(64, "0")
+            + ("1" if is_ask else "0").rjust(64, "0")
+            + f"{BOOK_LEVELS:x}".rjust(64, "0"))
+
+    for attempt in range(attempts):
+        try:
+            raw = rpc(url, "eth_call", [{"to": quoter, "data": data}, hex(block)],
+                      min_interval=BOOK_MIN_INTERVAL)[2:]
+            break
+        except RuntimeError:
+            # Отказ от спешки приходит обычной ошибкой JSON-RPC, а не кодом 429,
+            # поэтому выдержка внутри fetch сюда не достаёт — ждём здесь.
+            if attempt == attempts - 1:
+                raise
+            time.sleep(2 ** attempt)
+
+    # Возвращаются два динамических массива: в начале ответа лежат смещения
+    # до каждого, по смещению — длина и следом сами элементы.
+    words = [raw[i:i + 64] for i in range(0, len(raw), 64)]
+    out = []
+    for head in (0, 1):
+        at = int(words[head], 16) // 32
+        count = int(words[at], 16)
+        out.append([int(word, 16) for word in words[at + 1:at + 1 + count]])
+    return out
+
+
+def download_book(url, api, market, quoter, proxy, step_min, start_day, end_day, out_path):
+    """
+    Стакан на равномерной сетке времени.
+
+    Сделки показывают цену только там, где кто-то захотел торговать, а снимки
+    берутся по часам независимо ни от чего. Поэтому спред по ним меряется без
+    смещения — этим и проверяется, зависят ли издержки хеджа от волатильности.
+    """
+    meta = fetch(f"{api}/markets?market={market}")[0]
+    price_factor = 10 ** meta["priceScalingFactor"]
+    size_factor = 10 ** meta["tokenXScalingFactor"]
+
+    head = int(rpc(url, "eth_blockNumber", []), 16)
+    head_time = block_time(url, head)
+    first_second = midnight(start_day)
+    last_second = midnight(end_day + timedelta(days=1)) - 1
+
+    # Двоичный поиск делаем только по краям, номера остальных блоков берём
+    # линейно: у Base шаг ровно две секунды, а искать каждый снимок отдельно
+    # вышло бы дороже самой выгрузки.
+    first_block = block_at_time(url, first_second, head, head_time, BASE_BLOCKS_PER_SECOND)
+    last_block = block_at_time(url, last_second, head, head_time, BASE_BLOCKS_PER_SECOND)
+    rate = (last_block - first_block) / max(last_second - first_second, 1)
+
+    grid = range(first_second, last_second, step_min * 60)
+    print(f"стакан Hanji {meta['symbol']}: {start_day} .. {end_day}, шаг {step_min} мин")
+    print(f"       блоки {first_block}..{last_block}, снимков {len(grid)}")
+
+    rows = []
+    for done, second in enumerate(grid, 1):
+        block = first_block + round((second - first_second) * rate)
+        stamp = block_time(url, block)
+        # Метки проверены по данным, а не взяты из документации: сторона
+        # isAsk=false стоит выше справедливой цены Binance (+0.32 bps), а
+        # isAsk=true ниже (-1.11 bps). Тейкер переплачивает при покупке и
+        # недополучает при продаже, значит первая — это ask, вторая — bid.
+        for is_ask, side in ((False, "ask"), (True, "bid")):
+            prices, sizes = fetch_book(url, quoter, proxy, block, is_ask)
+            for level, (price, size) in enumerate(zip(prices, sizes), 1):
+                rows.append({
+                    "timestamp": stamp,
+                    "block": block,
+                    "side": side,
+                    "level": level,
+                    "price": price / price_factor,
+                    "size": size / size_factor,
+                })
+        if done % 25 == 0 or done == len(grid):
+            print(f"  {done}/{len(grid)}  всего {len(rows):,}")
+
+    with open(out_path, "w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"  -> {out_path}  ({len(rows):,} строк)\n")
+
+
 def main():
     settings = load_env()
     start_day = date.fromisoformat(settings["START_DAY"])
@@ -278,6 +394,10 @@ def main():
                    os.path.join(HERE, "pool_swaps.csv"))
     download_candles(settings["BINANCE_SYMBOL"], start_day, end_day,
                      os.path.join(HERE, "binance_candles.csv"))
+    download_book(settings["BASE_RPC_URL"], settings["HANJI_API"], settings["HANJI_MARKET"],
+                  settings["HANJI_QUOTER"], settings["HANJI_PROXY"],
+                  int(settings["HANJI_BOOK_STEP_MIN"]), start_day, end_day,
+                  os.path.join(HERE, "hanji_book.csv"))
 
 
 if __name__ == "__main__":

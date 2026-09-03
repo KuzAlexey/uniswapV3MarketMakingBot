@@ -6,3 +6,4 @@ dist/
 # The backtest and data-download configs are plain parameters and are committed.
 /.env
 .venv/
+__pycache__/

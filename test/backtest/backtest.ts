@@ -21,12 +21,13 @@ import {
   newStats,
   type State,
 } from './params.js';
-import { readCandles, readSwaps } from './read_market_data.js';
+import { readBook, readCandles, readSwaps } from './read_market_data.js';
 import { logSummary } from './result_log.js';
 
 // Read market data
 const swaps = readSwaps(); // pool swaps during [START_DAY, END_DAY]
 const candles = readCandles(); // Binance candles over the same period
+const book = readBook(); // Hanji book snapshots, read only, nothing consumes them yet
 
 // Starting state
 const state: State = {

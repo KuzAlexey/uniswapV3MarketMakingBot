@@ -32,6 +32,26 @@ export interface Candle {
   close: number;
 }
 
+/* --- One price level of the Hanji book: the quote and the size behind it. */
+export interface BookLevel {
+  price: number;
+  size: number;
+}
+
+/*
+--- One snapshot of the Hanji book, levels ordered best first.
+--- Levels 1-4 are the aggregator's virtual liquidity and sit within a bp of
+--- each other; the fifth is a real resting order percents away, never reached.
+--- Snapshots are taken on a time grid, so one is minutes old at any moment:
+--- the band is what they measure, the price level still comes from Binance.
+*/
+export interface Book {
+  timestamp: number;
+  block: number;
+  bid: BookLevel[];
+  ask: BookLevel[];
+}
+
 export interface Position {
   tickLower: number;
   tickUpper: number;
