@@ -3,6 +3,7 @@ import { DECIMALS_USDC, DECIMALS_WETH, priceFromSqrt, type Wallet } from './mock
 import {
   GAS_BURN,
   GAS_MINT,
+  HEDGE_BAND,
   PULL_FRACTION,
   RANGE_TICKS,
   SPREAD_TICKS,
@@ -33,12 +34,14 @@ export function logSummary(stats: Stats, finalWallet: Wallet, startSqrt: number,
         spreadTicks: SPREAD_TICKS,
         rangeTicks: RANGE_TICKS,
         pullFraction: PULL_FRACTION,
+        hedgeBand: HEDGE_BAND,
       },
       swaps: { seen: stats.swapsSeen, touched: stats.swapsFilled,
                inward: stats.fillsInward, back: stats.fillsBack },
       fees: stats.feesTotalUsd,
       gas,
-      net: stats.feesTotalUsd - gas,
+      net: stats.feesTotalUsd - gas - stats.hedgeCostUsd,
+      hedges: { count: stats.hedges, volumeUsd: stats.hedgeVolumeUsd, costUsd: stats.hedgeCostUsd },
       operations: { burns: stats.burns, mints: stats.mints },
       redeploys: {
         total: stats.byTrigger.midMoved + stats.byTrigger.poolRetraced + stats.byTrigger.noPosition,
@@ -59,7 +62,7 @@ export function logSummary(stats: Stats, finalWallet: Wallet, startSqrt: number,
   const redeploys = t.midMoved + t.poolRetraced + t.noPosition;
   const share = (v: number) => `${((v / (redeploys || 1)) * 100).toFixed(0)}%`;
 
-  console.log(`params          spread ${SPREAD_TICKS}, width ${RANGE_TICKS}, pull ${PULL_FRACTION}`);
+  console.log(`params          spread ${SPREAD_TICKS}, width ${RANGE_TICKS}, pull ${PULL_FRACTION}, band ${HEDGE_BAND}`);
   console.log('');
   const filled = stats.fillsInward + stats.fillsBack;
   const part = (v: number) => `${((v / (filled || 1)) * 100).toFixed(0)}%`;
@@ -68,6 +71,7 @@ export function logSummary(stats: Stats, finalWallet: Wallet, startSqrt: number,
   console.log(`  back          ${stats.fillsBack.toLocaleString().padStart(6)}  ${part(stats.fillsBack)}   bought back what we sold, same prices`);
   console.log(`fees            $${stats.feesTotalUsd.toFixed(2)}`);
   console.log(`gas             $${gas.toFixed(2)}   (${stats.burns.toLocaleString()} burns + ${stats.mints.toLocaleString()} mints)`);
+  console.log(`hedge           $${stats.hedgeCostUsd.toFixed(2)}   (${stats.hedges.toLocaleString()} swaps on $${stats.hedgeVolumeUsd.toFixed(0)})`);
   console.log('');
   console.log(`redeploys       ${redeploys.toLocaleString()}`);
   console.log(`  Binance moved     ${t.midMoved.toLocaleString().padStart(6)}  ${share(t.midMoved)}`);

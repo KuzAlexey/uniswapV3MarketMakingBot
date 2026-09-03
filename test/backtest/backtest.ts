@@ -5,12 +5,14 @@ import {
   DECIMALS_WETH,
   applySwap,
   close,
+  hedge,
   mint,
   priceFromSqrt,
   sqrtFromX96,
   type Swap,
 } from './mock.js';
 import {
+  HEDGE_BAND,
   POOL_ARBITRAGE_TRIGGER,
   PULL_FRACTION,
   RANGE_TICKS,
@@ -27,7 +29,8 @@ import { logSummary } from './result_log.js';
 // Read market data
 const swaps = readSwaps(); // pool swaps during [START_DAY, END_DAY]
 const candles = readCandles(); // Binance candles over the same period
-const book = readBook(); // Hanji book snapshots, read only, nothing consumes them yet
+const book = readBook(); // Hanji book snapshots, one a minute
+let bookIndex = 0; // cursor into them; declared here because let is not hoisted
 
 // Starting state
 const state: State = {
@@ -96,7 +99,29 @@ function poolRetraced(): boolean {
   return false;
 }
 
-function redeploy(mid: number, trigger: keyof typeof stats.byTrigger): void {
+/*
+--- Brings the wallet back to an even split when it has drifted too far.
+--- Called with both quotes already closed, so the wallet holds everything and
+--- the inventory is a plain number rather than a function of the pool price.
+*/
+function rebalance(ts: number, mid: number): void {
+  const weth = state.wallet.weth / 1e18;
+  const value = weth * mid + state.wallet.usdc / 1e6;
+  if (value <= 0) return;
+
+  // Measured as a share of the portfolio, so the band survives a change of
+  // capital and stays comparable between runs.
+  if (Math.abs((weth * mid) / value - 0.5) * 100 < HEDGE_BAND) return;
+
+  const target = value / (2 * mid);
+  const done = hedge(snapshotAt(ts), state.wallet, mid, (target - weth) * 1e18);
+  state.wallet = done.wallet;
+  stats.hedges += 1;
+  stats.hedgeVolumeUsd += Math.abs(target - weth) * mid;
+  stats.hedgeCostUsd += done.costUsd;
+}
+
+function redeploy(ts: number, mid: number, trigger: keyof typeof stats.byTrigger): void {
   const range = plan(mid);
 
   // The grid may round the new bounds to the same ticks, so the redeploy would
@@ -116,6 +141,8 @@ function redeploy(mid: number, trigger: keyof typeof stats.byTrigger): void {
     stats.burns += 1;
   }
   state.bid = state.ask = undefined;
+
+  rebalance(ts, mid);
 
   // A side is placed only if it sits entirely on its own side of the pool price.
   // Zero liquidity is dropped as well: the contract requires amount > 0, such a
@@ -170,13 +197,13 @@ for (const candle of candles) {
     if (filled) stats.swapsFilled += 1;
 
     updatePeakPrice();
-    if (poolRetraced()) redeploy(lastMid, 'poolRetraced');
+    if (poolRetraced()) redeploy(swap.timestamp, lastMid, 'poolRetraced');
     swapIndex += 1;
   }
 
   lastMid = candle.close;
-  if (!state.bid && !state.ask) redeploy(candle.close, 'noPosition');
-  else if (midMoved(candle.close)) redeploy(candle.close, 'midMoved');
+  if (!state.bid && !state.ask) redeploy(candle.timestamp, candle.close, 'noPosition');
+  else if (midMoved(candle.close)) redeploy(candle.timestamp, candle.close, 'midMoved');
 }
 
 let finalWallet = state.wallet;
@@ -192,6 +219,15 @@ logSummary(stats, finalWallet, sqrtFromX96(swaps[0]!.sqrtPriceX96), state.sqrtPo
 // ####### helpers #######
 function tickOf(price: number): number {
   return priceToTick(price, DECIMALS_WETH, DECIMALS_USDC);
+}
+
+/*
+--- Last book snapshot no later than ts. Time only moves forward in the run,
+--- so the cursor walks alongside it instead of searching from scratch.
+*/
+function snapshotAt(ts: number) {
+  while (bookIndex + 1 < book.length && book[bookIndex + 1]!.timestamp <= ts) bookIndex += 1;
+  return book[bookIndex]!;
 }
 
 function ticksBetween(a: number, b: number): number {

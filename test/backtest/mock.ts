@@ -11,6 +11,9 @@ export const DECIMALS_USDC = 6;
 /* --- Pool fee of 0.05%, a quarter of which goes to the protocol. */
 export const LP_FEE_RATE = 0.0005 * 0.75;
 
+/* --- Taker fee on Hanji, the aggressiveFee of the market. */
+export const HANJI_TAKER_FEE = 0.0001;
+
 /* --- Wallet. Amounts are in each token's smallest units. */
 export interface Wallet {
   weth: number;
@@ -182,4 +185,30 @@ export function valueUsd(wallet: Wallet, position: Position | undefined, sqrtPoo
   const weth = (wallet.weth + held.weth) / 10 ** DECIMALS_WETH;
   const usdc = (wallet.usdc + held.usdc) / 10 ** DECIMALS_USDC;
   return weth * priceFromSqrt(sqrtPool) + usdc;
+}
+
+/*
+--- A taker swap on Hanji. deltaWeth > 0 buys ETH for USDC, < 0 sells it.
+--- The level of the price comes from Binance, the book only says how far the
+--- sides stand from it: over the minute between snapshots the price drifts by
+--- 2.28 bps while the spread moves by 0.03.
+*/
+export function hedge(
+  book: Book,
+  wallet: Wallet,
+  fairPrice: number,
+  deltaWeth: number,
+): { wallet: Wallet; costUsd: number } {
+  // Both in USDC per ETH, so they add to the fair price directly.
+  const half = (book.ask[0]!.price - book.bid[0]!.price) / 2;
+  const fee = fairPrice * HANJI_TAKER_FEE;
+  const exec = deltaWeth > 0 ? fairPrice + half + fee : fairPrice - half - fee;
+
+  // No cap on the size: reaching a 50/50 target never asks for more than the
+  // wallet holds, and Hanji has no short to guard against anyway.
+  const weth = deltaWeth / 1e18;
+  return {
+    wallet: { weth: wallet.weth + deltaWeth, usdc: wallet.usdc - weth * exec * 1e6 },
+    costUsd: Math.abs(weth) * (half + fee),
+  };
 }

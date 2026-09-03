@@ -28,6 +28,17 @@ export const PULL_FRACTION = num('PULL_FRACTION', 0.7);
 */
 export const POOL_ARBITRAGE_TRIGGER = num('POOL_ARBITRAGE_TRIGGER', 5);
 
+/*
+--- How far the wallet may drift from an even split before we rebalance,
+--- in percentage points of the ETH share. Both quotes are the same width, so
+--- they need the same value on each side; a lopsided wallet places one of them
+--- thin or not at all. A drift often reverses on its own as the price comes
+--- back, and paying to correct it early is paying for what the market would
+--- have done for free - hence a band rather than a fix on every redeploy.
+--- 100 turns rebalancing off, which is the baseline to compare against.
+*/
+export const HEDGE_BAND = num('HEDGE_BAND', 10);
+
 /* --- Pool grid step: position bounds must be multiples of it. */
 export const TICK_SPACING = 10;
 
@@ -73,6 +84,10 @@ export interface Stats {
   fillsInward: number;
   fillsBack: number;
   feesTotalUsd: number;
+  /* --- Rebalancing on Hanji: how often, how much, and what it cost. */
+  hedges: number;
+  hedgeVolumeUsd: number;
+  hedgeCostUsd: number;
   /* --- On-chain operations; gas is derived from these. */
   burns: number;
   mints: number;
@@ -90,6 +105,7 @@ export interface Stats {
 export function newStats(): Stats {
   return {
     swapsSeen: 0, swapsFilled: 0, fillsInward: 0, fillsBack: 0, feesTotalUsd: 0,
+    hedges: 0, hedgeVolumeUsd: 0, hedgeCostUsd: 0,
     burns: 0, mints: 0,
     byTrigger: { midMoved: 0, poolRetraced: 0, noPosition: 0 },
   };
