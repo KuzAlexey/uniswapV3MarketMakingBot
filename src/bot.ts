@@ -1,7 +1,7 @@
 import { findPool, openFeed, readPool, type PoolState, type Quote } from './api.js';
 import { LOG_INTERVAL_MS, POOL_FEE } from './env.js';
 
-/** Prints the top of Binance's order book. */
+/* --- Top of the Binance book. */
 function logBinance(quote: Quote): void {
   console.log(
     `Binance  bid=${quote.bid.toFixed(2)}  ask=${quote.ask.toFixed(2)}  ` +
@@ -9,7 +9,7 @@ function logBinance(quote: Quote): void {
   );
 }
 
-/** Prints the current state of the Uniswap pool. */
+/* --- Current state of the pool. */
 function logPool(state: PoolState): void {
   console.log(
     `Pool     price=${state.price.toFixed(2)}  tick=${state.tick}  ` +
@@ -21,9 +21,8 @@ async function main(): Promise<void> {
   const poolAddress = await findPool();
   console.log(`pool ${poolAddress}\n`);
 
-  // Reading the pool takes a network round trip while Binance sends several
-  // updates per second, so we skip ticks that arrive too soon or while the
-  // previous read is still running.
+  // Reading the pool costs a round trip while Binance sends several updates a
+  // second, so ticks arriving too soon or during a pending read are skipped.
   let busy = false;
   let lastLoggedAt = 0;
 
