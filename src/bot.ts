@@ -1,7 +1,6 @@
 import { findPool, openFeed, readPool, type PoolState, type Quote } from './api.js';
 import { LOG_INTERVAL_MS, POOL_FEE } from './env.js';
 
-/* --- Top of the Binance book. */
 function logBinance(quote: Quote): void {
   console.log(
     `Binance  bid=${quote.bid.toFixed(2)}  ask=${quote.ask.toFixed(2)}  ` +
@@ -9,7 +8,6 @@ function logBinance(quote: Quote): void {
   );
 }
 
-/* --- Current state of the pool. */
 function logPool(state: PoolState): void {
   console.log(
     `Pool     price=${state.price.toFixed(2)}  tick=${state.tick}  ` +
