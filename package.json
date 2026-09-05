@@ -12,7 +12,6 @@
   "scripts": {
     "check": "tsc --noEmit",
     "bot": "tsx src/bot.ts",
-    "fork": "bash scripts/fork.sh",
     "backtest": "tsx test/backtest/backtest.ts"
   },
   "repository": {

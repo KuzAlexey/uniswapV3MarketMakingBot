@@ -273,7 +273,7 @@ function extractTokenId(receipt: ethers.TransactionReceipt): bigint {
 export function explainError(err: unknown): string {
   const text = JSON.stringify(err instanceof Error ? err.message : err);
   if (text.includes('missing trie node') || text.includes('missing revert data')) {
-    return 'fork is stale — the public node dropped that state. Restart anvil (npm run fork) or use an archive node';
+    return 'fork is stale — the public node dropped that state. Restart anvil or use an archive node';
   }
   return (err as any)?.shortMessage ?? String(err);
 }
