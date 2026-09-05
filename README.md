@@ -50,20 +50,9 @@ test/
 
 ### 1. When does an arbitrage opportunity appear?
 
-Arbitrage is a risk-free profit taken from a price that is **wrong**. Liquidity
-sitting at the fair price is not wrong, so trading against it is not arbitrage —
-the taker gains nothing on the spot. Two different things can go wrong here, and
-only the first one is arbitrage.
-
-**Arbitrage: a stale quote.** Binance moves and our position stays where it was.
-Our range now covers prices that are no longer fair. Someone buys ETH from us
-below the new fair value and sells it elsewhere in the same block, with no risk
-at all. This is what the assignment means by leaving arbitrage on the table, and
-it is what `PULL_FRACTION` guards against: we redeploy once the fair price has
-drifted a fraction of our gap, before the gap is used up.
-
-**Adverse selection: a quote at fair value.** This one is not risk-free for the
-taker, but it still costs us. To see why, look at the price we actually trade at.
+A Uniswap position does not quote one price. It quotes a whole range and trades
+along it as the price moves through, so the first thing to work out is the price
+we actually get.
 
 If the price travels from $P_1$ to $P_2$ inside our range, the position gives up
 
@@ -78,16 +67,36 @@ $$P_{\text{exec}} = \frac{\Delta y}{\Delta x} = \sqrt{P_1 P_2}$$
 **The price we actually trade at is the geometric mean of the two ends of the
 segment.** It does not depend on how big our position is.
 
-Now put a range straddling the fair price. Then $P_1 < P_{\text{fair}} < P_2$,
-so $P_{\text{exec}} \approx P_{\text{fair}}$: we sell at fair value and buy at
-fair value, and the 0.0375% pool fee is the entire income. That fee does not
-cover what the position gives up, because the flow reaching it is informed —
-people trade against us exactly when they expect the price to move on. The
-position ends up holding more of whichever asset is losing.
+That single number decides everything. The money on the table in any fill is
 
-**So the gap is not only a shield.** Quoting away from the fair price is what
-creates the edge in the first place: it guarantees every fill happens at a price
-better than fair, which is the only thing that can pay for adverse selection.
+$$\left|P_{\text{exec}} - P_{\text{fair}}\right|$$
+
+and **the sign of the difference decides who walks away with it.**
+
+**They take it — this is the arbitrage.** Our quote ends up on the wrong side of
+fair. That happens when Binance moves and our position does not: an ask placed
+above yesterday's fair price is below today's, so someone buys ETH from us cheap
+and sells it elsewhere in the same block, with no risk at all. This is what the
+assignment means by leaving arbitrage on the table, and `PULL_FRACTION` is what
+guards against it — we redeploy once the fair price has drifted, before the gap
+is used up.
+
+**Nobody takes it — and that is still bad.** A range straddling the fair price
+has $P_1 < P_{\text{fair}} < P_2$, so $P_{\text{exec}} \approx P_{\text{fair}}$:
+we sell at fair value and buy at fair value, and the 0.0375% pool fee is the
+entire income. The fee does not cover what the position gives up, because the
+flow reaching it is informed — people trade against us exactly when they expect
+the price to move on, and the position is left holding whichever asset is
+losing.
+
+**We take it.** Our quote sits on the far side of fair: the ask above it, the
+bid below it. Every fill is then better for us than the market price by exactly
+that gap, and nothing else about the position needs to be clever.
+
+**The main idea.** Quoting away from the fair price is what creates the edge in
+the first place — it guarantees every fill happens at a price better than fair.
+And when the pool price starts coming back towards fair, we should not be
+providing liquidity at all. That is the next section.
 
 ### 2. What a round trip costs
 
