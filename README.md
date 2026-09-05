@@ -212,6 +212,7 @@ All in `test/backtest/.env`.
 
 432 combinations were run over the same week and ranked by **delta-hedged
 PnL**
+
 **The recommended setting:**
 
 ```
