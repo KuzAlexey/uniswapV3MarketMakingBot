@@ -3,6 +3,7 @@ import { ceilToSpacing, floorToSpacing, priceToTick } from '../../src/math.js';
 import {
   DECIMALS_USDC,
   DECIMALS_WETH,
+  amounts,
   applySwap,
   close,
   hedge,
@@ -12,6 +13,8 @@ import {
   type Swap,
 } from './mock.js';
 import {
+  GAS_BURN,
+  GAS_MINT,
   HEDGE_BAND,
   POOL_ARBITRAGE_TRIGGER,
   PULL_FRACTION,
@@ -171,6 +174,11 @@ function redeploy(ts: number, mid: number, trigger: keyof typeof stats.byTrigger
 
 let swapIndex = 0;
 let lastMid = candles[0]!.close;
+// Curve starts at the untouched wallet, so the first mint's gas lands in the
+// first increment instead of disappearing into the baseline.
+let prevPrice = candles[0]!.close;
+let prevDelta = START_WETH / 1e18;
+let prevValue = prevDelta * prevPrice + START_USDC / 1e6;
 
 for (const candle of candles) {
   // Catch up on swaps up to this second, crediting fees to the live quotes.
@@ -204,6 +212,14 @@ for (const candle of candles) {
   lastMid = candle.close;
   if (!state.bid && !state.ask) redeploy(candle.timestamp, candle.close, 'noPosition');
   else if (midMoved(candle.close)) redeploy(candle.timestamp, candle.close, 'midMoved');
+
+  // Holding ETH while it rises is not skill, so the move on the exposure we
+  // were carrying is taken out. What is left is fees and spread less costs.
+  const { valueUsd, deltaWeth } = portfolio(candle.close);
+  stats.hedgedPnlUsd += valueUsd - prevValue - prevDelta * (candle.close - prevPrice);
+  prevValue = valueUsd;
+  prevDelta = deltaWeth;
+  prevPrice = candle.close;
 }
 
 let finalWallet = state.wallet;
@@ -217,6 +233,31 @@ logSummary(stats, finalWallet, sqrtFromX96(swaps[0]!.sqrtPriceX96), state.sqrtPo
 
 
 // ####### helpers #######
+
+/*
+--- Portfolio value at the fair price, and how much ETH it is exposed to.
+--- A position's composition follows the pool price, its worth the fair one.
+--- Fees earned but not yet banked count too, otherwise the curve jumps every
+--- time a side is closed.
+*/
+function portfolio(mid: number): { valueUsd: number; deltaWeth: number } {
+  let weth = state.wallet.weth;
+  let usdc = state.wallet.usdc;
+  let fees = stats.feesTotalUsd;
+  for (const side of [state.bid, state.ask]) {
+    if (!side) continue;
+    const held = amounts(side, state.sqrtPool);
+    weth += held.weth;
+    usdc += held.usdc;
+    fees += side.feesUsd;
+  }
+  const eth = weth / 1e18;
+  const gas = stats.burns * GAS_BURN + stats.mints * GAS_MINT;
+  return {
+    valueUsd: eth * mid + usdc / 1e6 + fees - gas - stats.hedgeCostUsd,
+    deltaWeth: eth,
+  };
+}
 function tickOf(price: number): number {
   return priceToTick(price, DECIMALS_WETH, DECIMALS_USDC);
 }

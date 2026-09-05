@@ -84,6 +84,11 @@ export interface Stats {
   fillsInward: number;
   fillsBack: number;
   feesTotalUsd: number;
+  /*
+  --- Value change with the price move on our own exposure taken out, so what
+  --- is left is what the strategy earned beyond simply holding the inventory.
+  */
+  hedgedPnlUsd: number;
   /* --- Rebalancing on Hanji: how often, how much, and what it cost. */
   hedges: number;
   hedgeVolumeUsd: number;
@@ -105,7 +110,7 @@ export interface Stats {
 export function newStats(): Stats {
   return {
     swapsSeen: 0, swapsFilled: 0, fillsInward: 0, fillsBack: 0, feesTotalUsd: 0,
-    hedges: 0, hedgeVolumeUsd: 0, hedgeCostUsd: 0,
+    hedgedPnlUsd: 0, hedges: 0, hedgeVolumeUsd: 0, hedgeCostUsd: 0,
     burns: 0, mints: 0,
     byTrigger: { midMoved: 0, poolRetraced: 0, noPosition: 0 },
   };

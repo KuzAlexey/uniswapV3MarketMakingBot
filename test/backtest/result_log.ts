@@ -26,6 +26,10 @@ export function logSummary(stats: Stats, finalWallet: Wallet, startSqrt: number,
   const startPrice0 = priceFromSqrt(startSqrt);
   const endPrice0 = priceFromSqrt(endSqrt);
   const startWallet: Wallet = { weth: START_WETH, usdc: START_USDC };
+  // Actual money made: what the wallet is worth now less what it was worth
+  // then, plus everything booked outside it.
+  const totalPnl = valueUsd(finalWallet, endPrice0) - valueUsd(startWallet, startPrice0)
+                   + stats.feesTotalUsd - gas - stats.hedgeCostUsd;
 
   // json for jupyter
   if (process.env.REPORT === 'json') {
@@ -41,6 +45,8 @@ export function logSummary(stats: Stats, finalWallet: Wallet, startSqrt: number,
       fees: stats.feesTotalUsd,
       gas,
       net: stats.feesTotalUsd - gas - stats.hedgeCostUsd,
+      totalPnl,
+      hedgedPnl: stats.hedgedPnlUsd,
       hedges: { count: stats.hedges, volumeUsd: stats.hedgeVolumeUsd, costUsd: stats.hedgeCostUsd },
       operations: { burns: stats.burns, mints: stats.mints },
       redeploys: {
@@ -71,6 +77,8 @@ export function logSummary(stats: Stats, finalWallet: Wallet, startSqrt: number,
   console.log(`  back          ${stats.fillsBack.toLocaleString().padStart(6)}  ${part(stats.fillsBack)}   bought back what we sold, same prices`);
   console.log(`fees            $${stats.feesTotalUsd.toFixed(2)}`);
   console.log(`gas             $${gas.toFixed(2)}   (${stats.burns.toLocaleString()} burns + ${stats.mints.toLocaleString()} mints)`);
+  console.log(`total PnL       $${totalPnl.toFixed(2)}   actual money, direction included`);
+  console.log(`delta-hedged    $${stats.hedgedPnlUsd.toFixed(2)}   what the strategy earned, direction removed`);
   console.log(`hedge           $${stats.hedgeCostUsd.toFixed(2)}   (${stats.hedges.toLocaleString()} swaps on $${stats.hedgeVolumeUsd.toFixed(0)})`);
   console.log('');
   console.log(`redeploys       ${redeploys.toLocaleString()}`);

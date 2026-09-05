@@ -210,40 +210,72 @@ All in `test/backtest/.env`.
 
 ### What the search found
 
-324 combinations were run over the same week. Each row below averages over
-every combination holding that one value, so it shows the **direction** a
-parameter pulls in, not what is achievable — the best column is the achievable
-part.
+432 combinations were run over the same week and ranked by **delta-hedged
+PnL** — value change with the price move on our own exposure taken out. It is
+the only column comparable between runs: total money is dominated by where ETH
+happened to go, and the runs end holding wildly different amounts of it.
+
+**The recommended setting:**
 
 ```
-                        avg net   best net   redeploys
-SPREAD_TICKS    20       -36.0     -14.77        775
-                30       -13.4      +5.86        357
-                50        -6.9      -0.04        132
-                80        -1.7      +3.89         50
-
-RANGE_TICKS     10       -10.6      +5.86        329
-                20       -14.5      +1.99        329
-                40       -18.4      -0.24        329
-
-PULL_FRACTION  0.70      -24.1      -3.72        451
-               0.90      -10.8      +0.67        286
-               0.95       -8.6      +5.86        250
+SPREAD_TICKS = 30      RANGE_TICKS = 10      PULL_FRACTION = 0.99
+POOL_ARBITRAGE_TRIGGER = 20                  HEDGE_BAND = 10
 ```
 
-Three parameters show a clean trend, and all three say the same thing: **trade
-less often.**
+```
+fees            $30.74
+spread edge     $33.57
+gas            -$16.98   (243 redeploys)
+rebalancing     -$4.54   (7 swaps on $26,415)
+                -------
+delta-hedged    $42.79    0.49% of capital in a week
+total PnL      $130.72    of which $105.88 is simply ETH going up
+ETH share at end  51.0%
+```
 
-The averages are negative because **only 26 of the 324 combinations make money
-at all**, and every average mixes good settings of the other parameters with bad
-ones. The reason is in the last column. A 20-tick gap forces 775 redeploys a
-week: $19.21 of fees against $53.15 of gas. An 80-tick gap needs only 50, and
-gas drops to $3.49 — but the fees fall to $1.85, because almost nothing reaches
-us any more.
+**Where the money comes from.** The fee is $30.74 and the gap is $33.57 — the
+two halves are about equal, and the gap is slightly the larger. A strategy
+tuned on fee income alone optimises the smaller half.
 
-Gas does not scale with capital and fees do, so at $8,721 the profitable window
-between those two extremes is narrow. On ten times the capital the fees grow ten
-times and the gas does not, and it stops being narrow.
+**A second operating point ties it.** `PULL_FRACTION = 0.90` gives $42.99 by
+redeploying more often: it pays $21.74 of gas instead of $16.98 and collects
+less in fees, but locks in $45.61 of gap instead of $33.57. The two are level
+within noise; 0.99 is preferred for using 243 transactions instead of 311, which
+makes it less exposed to a change in gas price.
+
+**Marginals.** Each row averages over every combination holding that one value,
+so it shows the direction a parameter pulls in; the best column is what is
+achievable.
+
+```
+                        avg      best   redeploys
+SPREAD_TICKS    20      -1.2     34.70       714
+                30      +9.8     47.16       330
+                50      +2.8     27.77       125
+                80      +7.4     31.21        46
+
+RANGE_TICKS     10     +15.9     47.16       303
+                20      +4.5     24.25       304
+                40      -6.2     19.81       304
+
+PULL_FRACTION  0.70     -9.0     22.29       451
+               0.90     +8.0     47.16       286
+               0.95     +8.1     42.26       250
+               0.99    +11.8     42.79       228
+```
+
+Narrower ranges and lazier redeployment win cleanly. The gap has an interior
+optimum at 30 ticks: below it gas takes over — a 20-tick gap forces 714
+redeploys a week — and above it almost nothing reaches us.
+
+`POOL_ARBITRAGE_TRIGGER` and `HEDGE_BAND` are flat within noise, spanning $2.1
+and $3.1 across the whole grid. The retrace guard closes a real leak and
+rebalancing is what keeps the exposure at 50%, but neither decides the result on
+this week.
+
+**270 of the 432 combinations are profitable.** An earlier version of this
+search ranked by fees minus costs and found only 26 of 324 — it was scoring the
+smaller half of the income and calling the rest a loss.
 
 ---
 
@@ -274,5 +306,3 @@ To download a different period, set `START_DAY` and `END_DAY` in
 packages needed. A week takes a few minutes.
 
 **The sweeps and the grid search** are in `test/analytics/backtest.ipynb`.
-
----
