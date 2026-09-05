@@ -211,10 +211,7 @@ All in `test/backtest/.env`.
 ### What the search found
 
 432 combinations were run over the same week and ranked by **delta-hedged
-PnL** — value change with the price move on our own exposure taken out. It is
-the only column comparable between runs: total money is dominated by where ETH
-happened to go, and the runs end holding wildly different amounts of it.
-
+PnL**
 **The recommended setting:**
 
 ```
