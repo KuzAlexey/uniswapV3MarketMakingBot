@@ -226,56 +226,11 @@ POOL_ARBITRAGE_TRIGGER = 20                  HEDGE_BAND = 10
 fees            $30.74
 spread edge     $33.57
 gas            -$16.98   (243 redeploys)
-rebalancing     -$4.54   (7 swaps on $26,415)
+rebalancing     -$4.54   (7 hedge-swaps on $26,415)
                 -------
 delta-hedged    $42.79    0.49% of capital in a week
-total PnL      $130.72    of which $105.88 is simply ETH going up
-ETH share at end  51.0%
+total PnL      $130.72    
 ```
-
-**Where the money comes from.** The fee is $30.74 and the gap is $33.57 — the
-two halves are about equal, and the gap is slightly the larger. A strategy
-tuned on fee income alone optimises the smaller half.
-
-**A second operating point ties it.** `PULL_FRACTION = 0.90` gives $42.99 by
-redeploying more often: it pays $21.74 of gas instead of $16.98 and collects
-less in fees, but locks in $45.61 of gap instead of $33.57. The two are level
-within noise; 0.99 is preferred for using 243 transactions instead of 311, which
-makes it less exposed to a change in gas price.
-
-**Marginals.** Each row averages over every combination holding that one value,
-so it shows the direction a parameter pulls in; the best column is what is
-achievable.
-
-```
-                        avg      best   redeploys
-SPREAD_TICKS    20      -1.2     34.70       714
-                30      +9.8     47.16       330
-                50      +2.8     27.77       125
-                80      +7.4     31.21        46
-
-RANGE_TICKS     10     +15.9     47.16       303
-                20      +4.5     24.25       304
-                40      -6.2     19.81       304
-
-PULL_FRACTION  0.70     -9.0     22.29       451
-               0.90     +8.0     47.16       286
-               0.95     +8.1     42.26       250
-               0.99    +11.8     42.79       228
-```
-
-Narrower ranges and lazier redeployment win cleanly. The gap has an interior
-optimum at 30 ticks: below it gas takes over — a 20-tick gap forces 714
-redeploys a week — and above it almost nothing reaches us.
-
-`POOL_ARBITRAGE_TRIGGER` and `HEDGE_BAND` are flat within noise, spanning $2.1
-and $3.1 across the whole grid. The retrace guard closes a real leak and
-rebalancing is what keeps the exposure at 50%, but neither decides the result on
-this week.
-
-**270 of the 432 combinations are profitable.** An earlier version of this
-search ranked by fees minus costs and found only 26 of 324 — it was scoring the
-smaller half of the income and calling the rest a loss.
 
 ---
 
