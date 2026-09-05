@@ -210,18 +210,40 @@ All in `test/backtest/.env`.
 
 ### What the search found
 
-324 combinations were run over the same week. Three parameters show a clean
-trend, and all three say the same thing: **trade less often.** Average net by
-value:
+324 combinations were run over the same week. Each row below averages over
+every combination holding that one value, so it shows the **direction** a
+parameter pulls in, not what is achievable — the best column is the achievable
+part.
 
 ```
-SPREAD_TICKS    20: -36.0    30: -13.4    50: -6.9    80: -1.7
-RANGE_TICKS     10: -10.6    20: -14.5    40: -18.4
-PULL_FRACTION  0.70: -24.1  0.90: -10.8  0.95: -8.7
+                        avg net   best net   redeploys
+SPREAD_TICKS    20       -36.0     -14.77        775
+                30       -13.4      +5.86        357
+                50        -6.9      -0.04        132
+                80        -1.7      +3.89         50
+
+RANGE_TICKS     10       -10.6      +5.86        329
+                20       -14.5      +1.99        329
+                40       -18.4      -0.24        329
+
+PULL_FRACTION  0.70      -24.1      -3.72        451
+               0.90      -10.8      +0.67        286
+               0.95       -8.6      +5.86        250
 ```
 
-Gas does not scale with capital but fees do, so at this size every redeploy
-avoided is worth more than the fees it would have earned.
+Three parameters show a clean trend, and all three say the same thing: **trade
+less often.**
+
+The averages are negative because **only 26 of the 324 combinations make money
+at all**, and every average mixes good settings of the other parameters with bad
+ones. The reason is in the last column. A 20-tick gap forces 775 redeploys a
+week: $19.21 of fees against $53.15 of gas. An 80-tick gap needs only 50, and
+gas drops to $3.49 — but the fees fall to $1.85, because almost nothing reaches
+us any more.
+
+Gas does not scale with capital and fees do, so at $8,721 the profitable window
+between those two extremes is narrow. On ten times the capital the fees grow ten
+times and the gas does not, and it stops being narrow.
 
 ---
 
@@ -254,34 +276,3 @@ packages needed. A week takes a few minutes.
 **The sweeps and the grid search** are in `test/analytics/backtest.ipynb`.
 
 ---
-
-## Assumptions and trade-offs
-
-**Hanji has no Arbitrum deployment.** It runs on Etherlink, Base and Monad. Delta
-can be hedged across chains — a short on Base offsets a long on Arbitrum — but
-inventory for the next mint cannot: selling ETH on Base does not produce USDC on
-Arbitrum. The backtest therefore models the rebalance with costs measured from
-the live Base book (0.72 bp half-spread plus 1 bp taker fee, **1.72 bp** one
-way), and the on-chain adapter is not wired up.
-
-**The book gives the shape, Binance gives the level.** A Hanji snapshot is up to
-a minute old. Over that minute the price drifts by 2.28 bp while the spread
-moves by 0.03 bp, so only the ratio is taken from the book; the price level
-comes from the Binance candle of that second.
-
-**Fees are credited in USDC** regardless of which direction the swap went.
-Uniswap charges in the input token. On a week with a 2.8% price move this shifts
-the result by cents.
-
-**Our own liquidity does not move the price.** The replay credits us a share of
-each swap without simulating the impact our position would have had. This holds
-while our share is small, which it is at this size.
-
-**Results are in-sample.** The best cell of a 324-point grid on a single week is
-a maximum found by looking, not a prediction. The monotone trends across 81 runs
-each are worth trusting; the winning combination itself is not.
-
-**Not done:** the live Hanji adapter, a Solidity helper contract for bundling
-position calls, a Dockerfile, and Sharpe / max-drawdown — those need an equity
-curve sampled on a fixed grid rather than the single end-of-week number the
-backtest reports today.
