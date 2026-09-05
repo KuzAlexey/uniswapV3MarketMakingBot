@@ -50,8 +50,20 @@ test/
 
 ### 1. When does an arbitrage opportunity appear?
 
-A Uniswap position does not quote one price. It quotes a whole range, and it
-trades along it as the price moves through.
+Arbitrage is a risk-free profit taken from a price that is **wrong**. Liquidity
+sitting at the fair price is not wrong, so trading against it is not arbitrage —
+the taker gains nothing on the spot. Two different things can go wrong here, and
+only the first one is arbitrage.
+
+**Arbitrage: a stale quote.** Binance moves and our position stays where it was.
+Our range now covers prices that are no longer fair. Someone buys ETH from us
+below the new fair value and sells it elsewhere in the same block, with no risk
+at all. This is what the assignment means by leaving arbitrage on the table, and
+it is what `PULL_FRACTION` guards against: we redeploy once the fair price has
+drifted a fraction of our gap, before the gap is used up.
+
+**Adverse selection: a quote at fair value.** This one is not risk-free for the
+taker, but it still costs us. To see why, look at the price we actually trade at.
 
 If the price travels from $P_1$ to $P_2$ inside our range, the position gives up
 
@@ -68,14 +80,16 @@ segment.** It does not depend on how big our position is.
 
 Now put a range straddling the fair price. Then $P_1 < P_{\text{fair}} < P_2$,
 so $P_{\text{exec}} \approx P_{\text{fair}}$: we sell at fair value and buy at
-fair value. We earn the 0.0375% pool fee and nothing else, while an arbitrageur
-takes everything else the price move was worth.
+fair value, and the 0.0375% pool fee is the entire income. That fee does not
+cover what the position gives up, because the flow reaching it is informed —
+people trade against us exactly when they expect the price to move on. The
+position ends up holding more of whichever asset is losing.
 
-**That is the arbitrage opportunity: liquidity sitting at or near the fair
-price.** Anyone can trade against it at a price they would have got anyway, so
-the whole gain of the move goes to them.
+**So the gap is not only a shield.** Quoting away from the fair price is what
+creates the edge in the first place: it guarantees every fill happens at a price
+better than fair, which is the only thing that can pay for adverse selection.
 
-### 2. Which positions lose money
+### 2. What a round trip costs
 
 Being filled is not the problem. The problem is being filled *twice*.
 
@@ -86,33 +100,53 @@ $$P_{\text{exec}} = \sqrt{p_a P_2} > P_{\text{fair}}$$
 
 Good: we sold above fair value.
 
-But the pool price is not the fair price — it is pulled back towards fair by
-arbitrageurs. When it comes back down through the same range, **our own
-position buys that ETH back**, along the same curve, at the same geometric
-mean. The two trades cancel:
+But the pool price is not the fair price — arbitrageurs pull it back. When it
+comes back down through the same range, **our own position buys that ETH back**,
+along the same curve, at the same geometric mean. The composition returns to
+exactly what it was:
 
-$$\underbrace{\sqrt{p_a P_2}}_{\text{sold at}} \;=\; \underbrace{\sqrt{p_a P_2}}_{\text{bought back at}}
-\qquad\Longrightarrow\qquad \text{profit} = 0$$
+```
+ask 1930..1951, fair price 1900
 
-All that is left is the pool fee. The spread we earned on the way in is handed
-straight back on the way out.
+  before      0.124860 ETH +   0.00 USDC
+  at the top  0.000000 ETH + 242.25 USDC
+  back down   0.124860 ETH +   0.00 USDC   <- exactly as before
+```
 
-So the position that loses money is **the one still standing when the pool price
-turns around**. Not the one that got filled — the one that got filled and then
-un-filled.
+Note what this is and is not. The round trip does **not** lose money — we end
+with what we started, and we collected the fee on both legs. What it destroys is
+the profit we had already made and could have kept:
+
+```
+value at fair price 1900, after the round trip     237.23 USD
+value if we had closed at the top                  242.25 USD
+                                                   ------
+given back                                           5.01 USD
+```
+
+So the position that costs us money is **the one still standing when the pool
+price turns around**. Not the one that got filled — the one that got filled and
+then un-filled.
 
 ### 3. What we do about it
 
-Two rules follow directly.
+Three rules, one for each problem above, and each is a parameter.
 
-**Never quote across the fair price.** Both ranges stay a gap away from it, so
-there is nothing for an arbitrageur to trade against at fair value.
+**Keep a gap from the fair price** — `SPREAD_TICKS`. This is not defence, it is
+the edge itself: a quote held back from fair can only be filled at a price
+better than fair, and that margin is what pays for adverse selection.
 
-**Pull the position when the pool price reverses.** We remember the deepest
-point the pool price reached inside each live range. When it retraces from that
-point by more than a threshold, we close the position before it can be unwound.
-The sale stays locked in, and we buy the ETH back lower through the other side
-instead — capturing the whole gap rather than zero.
+**Redeploy once the fair price drifts** — `PULL_FRACTION`. A quote that has not
+moved while Binance has is the stale quote of section 1, and stale quotes are
+the real arbitrage. We move ours before the gap is eaten up, measuring distance
+rather than waiting for a boundary to be crossed: the fair price moving *away*
+from our quotes needs a redeploy just as much as it moving into them.
+
+**Pull when the pool price reverses** — `POOL_ARBITRAGE_TRIGGER`. We remember
+the deepest point the pool price reached inside each live range. When it
+retraces from that point by more than the threshold, we close before the
+position can be un-filled. The sale stays locked in, and the ETH is bought back
+lower through the bid instead — capturing the whole gap rather than zero.
 
 ### 4. How we place the quotes
 
@@ -175,7 +209,7 @@ All in `test/backtest/.env`.
 | `SPREAD_TICKS` | Gap between the fair price and each quote. This is the edge we earn per fill. Wider means fewer fills but more per fill. |
 | `RANGE_TICKS` | Width of each quote. Liquidity is inversely proportional to width, so a wider range is a thinner position: $L \propto 1/\text{width}$. |
 | `PULL_FRACTION` | How far the fair price may drift, as a fraction of `SPREAD_TICKS`, before we redeploy. Lower means we chase the price harder and pay more gas. |
-| `POOL_ARBITRAGE_TRIGGER` | How far the pool price may retrace from its best point inside our range before we pull. This is rule 2 of section 3. A large value turns it off. |
+| `POOL_ARBITRAGE_TRIGGER` | How far the pool price may retrace from its best point inside our range before we pull. This is the third rule of section 3. A large value turns it off. |
 | `HEDGE_BAND` | How far the ETH share of the wallet may drift from 50% before we rebalance on Hanji. `100` turns hedging off. |
 | `START_WETH`, `START_USDC` | Starting wallet. |
 | `GAS_BURN`, `GAS_MINT` | Cost of one on-chain operation on Arbitrum, in dollars. |
