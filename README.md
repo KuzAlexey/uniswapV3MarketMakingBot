@@ -67,36 +67,21 @@ $$P_{\text{exec}} = \frac{\Delta y}{\Delta x} = \sqrt{P_1 P_2}$$
 **The price we actually trade at is the geometric mean of the two ends of the
 segment.** It does not depend on how big our position is.
 
-That single number decides everything. The money on the table in any fill is
+That single number decides everything. The money in any fill is
 
 $$\left|P_{\text{exec}} - P_{\text{fair}}\right|$$
 
-and **the sign of the difference decides who walks away with it.**
+and the sign decides who walks away with it. If our quote ends up on the wrong
+side of fair — Binance moved and our position did not — the taker buys cheap
+from us and sells elsewhere in the same block, with no risk. If the range
+straddles fair, then $P_{\text{exec}} \approx P_{\text{fair}}$ and nobody gains
+anything at all: the 0.0375% pool fee is the whole income, and it does not cover
+what informed flow takes out of the position.
 
-**They take it — this is the arbitrage.** Our quote ends up on the wrong side of
-fair. That happens when Binance moves and our position does not: an ask placed
-above yesterday's fair price is below today's, so someone buys ETH from us cheap
-and sells it elsewhere in the same block, with no risk at all. This is what the
-assignment means by leaving arbitrage on the table, and `PULL_FRACTION` is what
-guards against it — we redeploy once the fair price has drifted, before the gap
-is used up.
-
-**Nobody takes it — and that is still bad.** A range straddling the fair price
-has $P_1 < P_{\text{fair}} < P_2$, so $P_{\text{exec}} \approx P_{\text{fair}}$:
-we sell at fair value and buy at fair value, and the 0.0375% pool fee is the
-entire income. The fee does not cover what the position gives up, because the
-flow reaching it is informed — people trade against us exactly when they expect
-the price to move on, and the position is left holding whichever asset is
-losing.
-
-**We take it.** Our quote sits on the far side of fair: the ask above it, the
-bid below it. Every fill is then better for us than the market price by exactly
-that gap, and nothing else about the position needs to be clever.
-
-**The main idea.** Quoting away from the fair price is what creates the edge in
-the first place — it guarantees every fill happens at a price better than fair.
-And when the pool price starts coming back towards fair, we should not be
-providing liquidity at all. That is the next section.
+**The main idea.** Quoting away from the fair price is what creates the edge —
+it guarantees every fill happens at a price better than fair. And when the pool
+price starts coming back towards fair, we should not be providing liquidity at
+all. That is the next section.
 
 ### 2. What a round trip costs
 
