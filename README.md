@@ -139,8 +139,7 @@ from our quotes needs a redeploy just as much as it moving into them.
 **Pull when the pool price reverses** — `POOL_ARBITRAGE_TRIGGER`. We remember
 the deepest point the pool price reached inside each live range. When it
 retraces from that point by more than the threshold, **we close before the
-position can be un-filled**. The sale stays locked in, and the ETH is bought back
-lower through the bid instead — capturing the whole gap rather than zero.
+position can be un-filled**.
 
 ### 4. How we place the quotes
 
